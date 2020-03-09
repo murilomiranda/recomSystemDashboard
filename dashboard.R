@@ -12,7 +12,7 @@ library(lubridate)
 source("treat_data2.R")
 
 # setup ------------------------------------------------------------------------
-options(digits = 2, scipen=999)
+options(digits = 2, scipen=999, warn=-1)
 colors <- brewer.pal(12, "Paired")
 
 # Elago vs. Belkin data ---------------------------------------------------------
@@ -97,7 +97,7 @@ sidebar <- dashboardSidebar(
     menuItem("Recommendation System", icon = icon("fire"), startExpanded = TRUE,
       menuSubItem("Data", icon = icon("database"), tabName = "data2"),
       menuSubItem("EDA", icon = icon("chart-bar"), tabName = "eda2"),
-      menuSubItem("Apriori", icon = icon("search"), tabName = "ml2")
+      menuSubItem("Apriori", icon = icon("shopping-basket"), tabName = "ml2")
     )
   )
 )
@@ -275,32 +275,32 @@ body <- dashboardBody(
                    title = "Input", status = "success", solidHeader = TRUE,
                    sliderInput("quantity", "Quatity input:", min = floor(min(data_base2$product_quantity, na.rm = TRUE)), 
                                max = ceiling(max(data_base2$product_quantity, na.rm = TRUE)), 
-                               value = c(quantile(data_base2$product_quantity, probs = .25, na.rm = TRUE), 
-                                         quantile(data_base2$product_quantity, probs = .75, na.rm = TRUE)), 
+                               value = c(min(data_base2$product_quantity, na.rm = TRUE), 
+                                         max(data_base2$product_quantity, na.rm = TRUE)), 
                                round = 1, sep = ""),
                    sliderInput("total_paid", "Total paid input:", min = floor(min(data_base2$total_paid, na.rm = TRUE)), 
                                max = ceiling(max(data_base2$total_paid, na.rm = TRUE)), 
-                               value = c(quantile(data_base2$total_paid, probs = .25, na.rm = TRUE),
-                                         quantile(data_base2$total_paid, probs = .75, na.rm = TRUE)), 
+                               value = c(floor(min(data_base2$total_paid, na.rm = TRUE)),
+                                         ceiling(max(data_base2$total_paid, na.rm = TRUE))), 
                                round = 1, sep = ""),
-                   selectInput("brand2", "Brand input:", choices = unique(data_base2$brand), multiple = TRUE),
-                   selectInput("category", "Category input:", choices = unique(data_base2$manual_categories), multiple = TRUE),
+                   selectInput("brand2", "Brand input:", choices = unique(data_base2$brand), multiple = TRUE, selected = c("Apple", "Toshiba", "Philips", "Samsung", "LG", "Dell", "Microsoft")),
+                   selectInput("category", "Category input:", choices = unique(data_base2$manual_categories), multiple = TRUE, selected = c("accessories", "smartphone", "pc", "tablet", "laptop")),
                    dateRangeInput("dates", "Date range input:", start = min(data_base2$date), end = max(data_base2$date))
                )        
         ),
         column(width = 8,
                fluidRow(
-                 column(width = 5,
+                 column(width = 6,
                         valueBox(
                           width = NULL,
-                          value = textOutput("companies"), subtitle = "Belkin vs. Elago",
-                          icon = icon("archway"), color = "green"
+                          value = textOutput("number_products"), subtitle = "Number of Products",
+                          icon = icon("shopping-cart"), color = "green"
                         )
                  ),
-                 column(width = 7,
+                 column(width = 6,
                         valueBox(
                           width = NULL,
-                          value = textOutput("average_salary"), subtitle = "Average salary per brand",
+                          value = textOutput("average_total_paid"), subtitle = "Average total paid",
                           icon = icon("dollar-sign"), color = "green"
                         )
                  )
@@ -308,15 +308,15 @@ body <- dashboardBody(
                fluidRow(
                  box(width = NULL, 
                      status = "success", solidHeader = TRUE,
-                     title = "Salary distribution by brand preference",
+                     title = "Total paid sum per Brand",
                      collapsible = TRUE,
-                     plotlyOutput("data1_plot1")
+                     plotlyOutput("data2_plot1")
                  ),
                  box(width = NULL, 
                      status = "success", solidHeader = TRUE,
-                     title = "Age distribution by brand preference",
+                     title = "Total paid sum through month",
                      collapsible = TRUE, collapsed = TRUE,
-                     plotlyOutput("data1_plot2")
+                     plotlyOutput("data2_plot2")
                  )
                )
         )
@@ -327,7 +327,17 @@ body <- dashboardBody(
     tabItem(
       tabName = "eda2",
       fluidRow(
-        box(width = 12, status="success", solidHeader = TRUE
+        column(width = 4,
+               box(width = 12, status="success", solidHeader = TRUE,
+                   selectInput('eda2_x', 'Select the variable on x-axis', names(data_base2), 'total_paid'),
+                   selectInput('eda2_y', 'Select the variable on y-axis', names(data_base2), 'brand'),
+                   selectInput('eda2_color', 'Select the variable on color', names(data_base2), 'manual_categories')
+               )
+        ), 
+        column(width = 8,
+               box(width = 12, status="success", solidHeader = TRUE,
+                   plotlyOutput("eda2_plot")
+               )
         )
       )
     ), 
@@ -377,7 +387,7 @@ server <- function(input, output, session){
   
   # show the database 1 ------------------------------------------------------
   output$table1 <- DT::renderDataTable({
-    data_base1_filter()
+    head(data_base1_filter(), 25)
   })
   
   # plot the database 1 (Salary distribution by brand preference) -------
@@ -540,6 +550,79 @@ server <- function(input, output, session){
   output$confModel2 <- renderText({
     confusionMatrix(rfBrand(), testSet()$brand)
   })
-}
   
+  # Recomendation system -----------------------------------------------------
+  # filter the database 2 ----------------------------------------------------
+  data_base2_filter <- reactive({
+    data_base2 %>% filter(brand %in% input$brand2) %>% 
+      filter(manual_categories %in% input$category) %>%
+      filter(total_paid >= input$total_paid[1], total_paid <= input$total_paid[2]) %>% 
+      filter(product_quantity >= input$quantity[1], product_quantity <= input$quantity[2]) %>% 
+      filter(date >= input$dates[1], date <= input$dates[2]) %>% 
+      droplevels()
+  })
+  
+  # show the database 2 ------------------------------------------------------
+  output$table2 <- DT::renderDataTable({
+    head(data_base2_filter(), 25)
+  })
+  
+  # plot the database 2 (Salary distribution by brand preference) -------
+  output$data2_plot1 <- renderPlotly({
+    data_base2_filter() %>% group_by(brand) %>% 
+      summarise(sum_total_paid = sum(total_paid)) %>% 
+      ggplot(aes(brand, sum_total_paid)) + geom_bar(stat = "identity") +
+      labs(
+        x = "",
+        y = "Sum of total paid",
+        fill = ""
+      ) + coord_flip()
+  })
+  
+  # plot the database 2 (Age distribution by brand preference) -------
+  output$data2_plot2 <- renderPlotly({
+    data_base2_filter() %>%  group_by(month = floor_date(date, "month")) %>%  
+      summarize(sum_total_paid = sum(total_paid)/100, sum_products = sum(product_quantity)) %>% 
+      gather(key = "variable", value = "value", -month) %>% 
+      ggplot(aes(x = month, y = value)) + 
+      geom_area(aes(color = variable, fill = variable), 
+                alpha = 0.5, position = position_dodge(0.8)) +
+      scale_color_manual(values = c("#00AFBB", "#E7B800")) +
+      scale_fill_manual(values = c("#00AFBB", "#E7B800")) +
+      labs(
+        x = "",
+        y = "Total paid (e+2)",
+        fill = ""
+      )
+  })
+  
+  # calculate basic statistics per brand --------------------------------------
+  data_base2_statistics <- reactive({
+    data_base2_filter() %>% 
+      summarize(n = n_distinct(sku), mean = mean(total_paid)) 
+  })
+  
+  # organize the output for valueBox number of products -----------------------
+  output$number_products <- renderText({
+    prettyNum(data_base2_statistics()$n, big.mark=",")
+  })
+  
+  # organize the output for valueBox average total_paid -----------------------
+  output$average_total_paid <- renderText({
+    prettyNum(data_base2_statistics()$mean, big.mark=",")
+  })
+  
+  # Recommendation system - EDA (Plot) ----------------------------------------
+  output$eda2_plot <- renderPlotly({
+    data_base2_filter() %>% 
+      ggplot(aes_string(input$eda2_x, input$eda2_y)) + 
+      geom_point(aes_string(color = input$eda2_color)) +
+      labs(
+        x = input$eda2_x,
+        y = input$eda2_y,
+        fill = ""
+      )
+  })
+}
+
 shinyApp(ui, server)
