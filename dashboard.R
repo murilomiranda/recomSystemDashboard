@@ -1,14 +1,21 @@
-library(RColorBrewer)
-library(shiny)
-library(shinydashboard)
-library(plotly)
-library(DT)
-library(tidyverse)
-library(caret)
-library(modelgrid)
-library(doParallel)
-library(RMySQL)
-library(lubridate)
+#library(modelgrid)
+# Setting the required packages ------------------------------------------------
+pkgs <- c("shiny", "shinydashboard", "shinyWidgets",
+          "shinycssloaders", "RColorBrewer",
+          "plotly", "caret",
+          "tidyverse", "RMySQL", "arules", "arulesViz",
+          "DT", "knitr", "kableExtra", "doParallel"
+)
+
+for(pkg in pkgs){
+  if(!(pkg %in% rownames(installed.packages()))){
+    install.packages(pkg, dependencies = TRUE)
+  }
+  lapply(pkg, FUN = function(X) {
+    do.call("require", list(X))
+  })
+}
+
 source("treat_data2.R")
 
 # setup ------------------------------------------------------------------------
@@ -241,7 +248,7 @@ body <- dashboardBody(
       fluidRow(
         column(width = 4,
                box(width = NULL, 
-                   title = "Preprocesses", status="success", solidHeader = TRUE,
+                   title = "Parameters", status="success", solidHeader = TRUE,
                    selectInput("ml1_preprocess", "Preprocess methods:", c("Center" = "center", "Scale" = "scale", "Zero-variance" = "zv", "Correlation" = "corr"), selected = "center", multiple = TRUE),
                    sliderInput("ml1_proportion", "Proportion train/test set", min = 0, max = 1, value = 0.75),
                    selectInput("ml1_parameter", "Resampling method:", c("Cross-validation" = "repeatedcv", "Bootstrap" = "boot"), selected = "repeatedcv"),
@@ -346,7 +353,29 @@ body <- dashboardBody(
     tabItem(
       tabName = "ml2",
       fluidRow(
-        box(width = 12, status="success", solidHeader = TRUE
+        column(width = 4,
+               box(width = NULL, 
+                   title = "Parameters", status="success", solidHeader = TRUE,
+                   sliderInput("ml2_support", "Support input:", min = 0, max = 0.003, value = 0.002),
+                   sliderInput("ml2_confidence", "Confidence input:", min = 0, max = 0.8, value = 0.25),
+                   sliderInput("ml2_minlen", "Minimum length for rules:", min = 1, max = 10, value = 2),
+                   selectInput("ml2_rhs", "Right-hand-side input:", choices = unique(data_base2$sku), selected = "C5.0"),
+                   selectInput("ml1_lhr", "Left-hand-side input:", choices = unique(data_base2$sku), selected = "rf")
+               )
+        ),
+        column(width = 8,
+               tabBox(width = NULL,
+                   tabPanel("Transectional Data", 
+                            verbatimTextOutput("ml2_summary")),
+                   tabPanel("Apriori Summary", 
+                            verbatimTextOutput("ml2_apriori")),
+                   tabPanel("Rules", 
+                            DT::dataTableOutput("apriori_rules")),
+                   tabPanel("Grouped",
+                            plotOutput("apriori_plot_grouped")),
+                   tabPanel("Graph",
+                            plotOutput("apriori_plot_graph"))
+               )
         )
       )
     )
@@ -622,6 +651,54 @@ server <- function(input, output, session){
         y = input$eda2_y,
         fill = ""
       )
+  })
+  
+  # Recommendation system - Apriori algorithm --------------------------------
+  transectional_data <- reactive({
+    product_freq <- data_base2_filter() %>% group_by(sku) %>% 
+      summarise(quantity = sum(product_quantity))
+    line_item_clean <- data_base2_filter() %>% filter(sku %in% product_freq$sku)
+    
+    transact <- line_item_clean %>% arrange(id_order) %>% 
+      mutate(id_order_sku = paste(id_order, sku, sep = ";")) %>% 
+      select(id_order_sku) %>% unlist(., use.names = FALSE) %>% paste(., collapse = "\n" )
+    paste("item_id;trans_id", transact, sep = "\n") %>% write("item_list")
+    
+    transact <- read.transactions("item_list", format = "single", header = TRUE, sep = ";", cols = c("item_id", "trans_id"))
+    transact
+  })
+  
+  output$ml2_summary <- renderPrint({
+    summary(transectional_data())
+  })
+  
+  output$apriori_plot <- renderPlotly({
+    itemFrequencyPlot(transectional_data(), type = "absolute", horiz= TRUE, top = 20, 
+                      support = input$support, cex.names = .5)
+  })
+  
+  apriori_model <- reactive({
+    trans_rules  <- apriori(transectional_data(), parameter = list(support = input$ml2_support, 
+            confidence = input$ml2_confidence, minlen = input$ml2_minlen), control = list(verbose = F))
+    
+    # remove redundant rules
+    trans_rules[!is.redundant(trans_rules)]
+  })
+  
+  output$ml2_apriori <- renderPrint({
+    summary(apriori_model())
+  })
+  
+  output$apriori_rules <- DT::renderDataTable({
+    inspectDT(apriori_model())
+  })
+  
+  output$apriori_plot_grouped <- renderPlot({
+    plot(apriori_model(), method = "grouped")
+  })
+  
+  output$apriori_plot_graph <- renderPlot({
+    plot(apriori_model(), method = "graph")
   })
 }
 
