@@ -232,6 +232,9 @@ body <- dashboardBody(
                    selectInput('eda1_x', 'Select the variable on x-axis', names(data_base1), 'salary'),
                    selectInput('eda1_y', 'Select the variable on y-axis', names(data_base1), 'age'),
                    selectInput('eda1_color', 'Select the variable on color', names(data_base1), 'brand')
+               ),
+               box(status="success", solidHeader = TRUE,
+                   selectInput('eda1_geom', "Select the graph type:", c("point", "bar"), selected = "point")
                )
         ), 
         column(width = 8,
@@ -505,8 +508,14 @@ server <- function(input, output, session){
   # Belgin vs. Elago - EDA (Plot) --------------------------------------------
   output$eda1_plot <- renderPlotly({
     data_base1_filter() %>% 
-      ggplot(aes_string(input$eda1_x, input$eda1_y)) + 
-      geom_point(aes_string(color = input$eda1_color)) +
+      p <- ggplot(aes_string(input$eda1_x, input$eda1_y))
+      
+      if(input$eda1_geom == "point"){
+        p <- p + geom_point(aes_string(color = input$eda1_color))
+      } else if(input$eda1_geom == "bar"){
+        p <- p + geom_bar(aes_string(color = input$eda1_color)) 
+      }
+      p +
       labs(
         x = input$eda1_x,
         y = input$eda1_y,
